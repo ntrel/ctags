@@ -6,7 +6,7 @@
 *   This source code is released for free distribution under the terms of the
 *   GNU General Public License.
 *
-*   This module contains functions for parsing and scanning C, C++ and Java
+*   This module contains functions for parsing and scanning C, C++, C#, D and Java
 *   source files.
 */
 
@@ -1045,9 +1045,9 @@ static const char* accessField (const statementInfo *const st)
 
 static void addContextSeparator (vString *const scope)
 {
-	if (isLanguage (Lang_c)  ||  isLanguage (Lang_cpp) || isLanguage(Lang_d))
+	if (isLanguage (Lang_c)  ||  isLanguage (Lang_cpp))
 		vStringCatS (scope, "::");
-	else if (isLanguage (Lang_java) || isLanguage (Lang_csharp))
+	else if (isLanguage (Lang_java) || isLanguage (Lang_csharp) || isLanguage(Lang_d))
 		vStringCatS (scope, ".");
 }
 
@@ -1100,7 +1100,7 @@ static void addOtherFields (tagEntryInfo* const tag, const tagType type,
 			}
 			if (st->implementation != IMP_DEFAULT &&
 				(isLanguage (Lang_cpp) || isLanguage (Lang_csharp) ||
-				 isLanguage (Lang_java)))
+				 isLanguage (Lang_d) || isLanguage (Lang_java)))
 			{
 				tag->extensionFields.implementation =
 						implementationString (st->implementation);
@@ -1461,6 +1461,8 @@ static void skipToMatch (const char *const pair)
 	int matchLevel = 1;
 	int c = '\0';
 
+	if (isLanguage(Lang_d) && pair[0] == '<')
+		return; /* ignore e.g. Foo!(x < 2) */
 	while (matchLevel > 0  &&  (c = skipToNonWhite ()) != EOF)
 	{
 		if (CollectingSignature)
@@ -1518,6 +1520,13 @@ static void skipBraces (void)
 static keywordId analyzeKeyword (const char *const name)
 {
 	const keywordId id = (keywordId) lookupKeyword (name, getSourceLanguage ());
+
+	/* ignore D @attributes and Java @annotations(...), but show them in function signatures */
+	if ((isLanguage(Lang_d) || isLanguage(Lang_java)) && id == KEYWORD_NONE && name[0] == '@')
+	{
+		skipParens(); /* if annotation has parameters, skip them */
+		return KEYWORD_CONST;
+	}
 	return id;
 }
 
@@ -1744,7 +1753,7 @@ static void setAccess (statementInfo *const st, const accessType access)
 {
 	if (isMember (st))
 	{
-		if (isLanguage (Lang_cpp))
+		if (isLanguage (Lang_cpp) || isLanguage (Lang_d))
 		{
 			int c = skipToNonWhite ();
 
@@ -1881,7 +1890,7 @@ static void processToken (tokenInfo *const token, statementInfo *const st)
 		case KEYWORD_VIRTUAL:   st->implementation = IMP_VIRTUAL;       break;
 		case KEYWORD_WCHAR_T:   st->declaration = DECL_BASE;            break;
 		case KEYWORD_TEMPLATE:
-			if(isLanguage(Lang_d))
+			if (isLanguage(Lang_d))
 				st->declaration = DECL_TEMPLATE;
 			break;
 		case KEYWORD_NAMESPACE: readPackageOrNamespace (st, DECL_NAMESPACE); break;
@@ -2374,6 +2383,11 @@ static int parseParens (statementInfo *const st, parenInfo *const info)
 						}
 					}
 				}
+				else if (isLanguage(Lang_d) && c == '!')
+				{ /* D template instantiation */
+					info->isNameCandidate = FALSE;
+					info->isKnrParamList = FALSE;
+				}
 				else
 				{
 					info->isParamList     = FALSE;
@@ -2444,10 +2458,10 @@ static void analyzeParens (statementInfo *const st)
 			st->gotParenName = TRUE;
 			if (! (c == '('  &&  info.nestedArgs))
 				st->isPointer = info.isPointer;
-			//if( c == '(' && isType (prev, TOKEN_NAME)){
-			//	st->declaration = DECL_FUNCTION_TEMPLATE;
-			//	copyToken (st->blockName, prev);
-			//}
+			if (isLanguage(Lang_d) && c == '(' && isType (prev, TOKEN_NAME)){
+				st->declaration = DECL_FUNCTION_TEMPLATE;
+				copyToken (st->blockName, prev);
+			}
 		}
 		else if (! st->gotArgs  &&  info.isParamList)
 		{
@@ -2474,7 +2488,8 @@ static void addContext (statementInfo *const st, const tokenInfo* const token)
 		{
 			if (isLanguage (Lang_c)  ||  isLanguage (Lang_cpp))
 				vStringCatS (st->context->name, "::");
-			else if (isLanguage (Lang_java) || isLanguage (Lang_csharp))
+			else if (isLanguage (Lang_java) || isLanguage (Lang_csharp) ||
+				isLanguage (Lang_d))
 				vStringCatS (st->context->name, ".");
 		}
 		vStringCat (st->context->name, token->name);
@@ -2742,7 +2757,7 @@ static boolean isStatementEnd (const statementInfo *const st)
 		 * namespaces. All other blocks require a semicolon to terminate them.
 		 */
 		isEnd = (boolean) (isLanguage (Lang_java) || isLanguage (Lang_csharp) ||
-				! isContextualStatement (st));
+				 isLanguage (Lang_d) || ! isContextualStatement (st));
 	else
 		isEnd = FALSE;
 
@@ -2834,7 +2849,7 @@ static void tagCheck (statementInfo *const st)
 					if (isType (prev2, TOKEN_NAME))
 						copyToken (st->blockName, prev2);
 
-					if( st->declaration == DECL_CLASS)
+					if (st->declaration == DECL_CLASS)
 						qualifyBlockTag (st, prev2);
 					else
 						qualifyFunctionTag (st, prev2);
